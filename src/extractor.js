@@ -5,11 +5,39 @@ const path = require('path');
 
 /**
  * Get the path to the Cursor database file based on the operating system
+ * Supports custom user data directories when extension context is provided
  */
-function getDbPath() {
+function getDbPath(extensionContext = null) {
     const platform = os.platform();
+    
+    // If we have extension context, try to detect custom user data directory
+    if (extensionContext && extensionContext.globalStorageUri) {
+        try {
+            // The globalStorageUri gives us the path to the extension's global storage
+            // We need to navigate up to find the state.vscdb file
+            const globalStoragePath = extensionContext.globalStorageUri.fsPath;
+            
+            // Extract the user data directory from the global storage path
+            // Pattern: /path/to/userdata/User/globalStorage/extension-name
+            // We want: /path/to/userdata/User/globalStorage/state.vscdb
+            const userGlobalStorageDir = path.dirname(globalStoragePath);
+            const dbPath = path.join(userGlobalStorageDir, 'state.vscdb');
+            
+            // Check if this custom path exists
+            try {
+                const fs = require('fs');
+                fs.accessSync(dbPath);
+                return dbPath;
+            } catch (e) {
+                // Fall back to default paths if custom path doesn't exist
+            }
+        } catch (error) {
+            // Fall back to default paths if context parsing fails
+        }
+    }
+    
+    // Default paths when no custom user data directory is detected
     const homeDir = os.homedir();
-
     switch (platform) {
         case 'darwin': // macOS
             return path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
@@ -25,8 +53,8 @@ function getDbPath() {
 /**
  * Extract data from the cursorDiskKV table which contains the actual conversation content
  */
-async function extractCursorDiskKV(dbPath = null) {
-    const globalDbPath = dbPath || getDbPath();
+async function extractCursorDiskKV(dbPath = null, extensionContext = null) {
+    const globalDbPath = dbPath || getDbPath(extensionContext);
     const tempDbPath = path.join(os.tmpdir(), `temp_cursor_diskv_${Date.now()}.db`);
     const globalWalPath = globalDbPath + '-wal';
     const globalShmPath = globalDbPath + '-shm';
@@ -222,14 +250,23 @@ function parseMessageContent(content) {
         parsed.thinking_blocks.push(thinkingMatch[1].trim());
     }
     
-    // Extract code blocks
-    const codePattern = /```(\w+)?\n([\s\S]*?)\n```/g;
+    // Extract code blocks - improved pattern to handle various formats
+    const codePattern = /```(\w+)?([^\n]*)?\n?([\s\S]*?)```/g;
     let codeMatch;
     
     while ((codeMatch = codePattern.exec(content)) !== null) {
+        // Handle both "```lang\ncode```" and "```code```" formats
+        let language = codeMatch[1] || 'text';
+        let code = codeMatch[3] || codeMatch[2] || '';
+        
+        // If no language specified but first part looks like code, use it
+        if (!codeMatch[1] && codeMatch[2] && !codeMatch[2].includes('\n')) {
+            code = codeMatch[2];
+        }
+        
         parsed.code_blocks.push({
-            language: codeMatch[1] || 'text',
-            code: codeMatch[2].trim()
+            language: language,
+            code: code.trim()
         });
     }
     

@@ -14,7 +14,7 @@ const {
 /**
  * Show conversation selection UI in VSCode
  */
-async function showConversationSelector() {
+async function showConversationSelector(extensionContext = null) {
     try {
         // Show progress
         const result = await vscode.window.withProgress({
@@ -32,7 +32,7 @@ async function showConversationSelector() {
             // Get recent conversations
             let conversations;
             try {
-                conversations = await getRecentConversations(10);
+                conversations = await getRecentConversations(10, extensionContext);
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}. Make sure Cursor is installed and you have used it recently.`);
                 return null;
@@ -120,7 +120,7 @@ async function showConversationSelector() {
 /**
  * Show conversation selection UI in VSCode for JSON export
  */
-async function showConversationSelectorJSON() {
+async function showConversationSelectorJSON(extensionContext = null) {
     try {
         // Show progress
         const result = await vscode.window.withProgress({
@@ -138,7 +138,7 @@ async function showConversationSelectorJSON() {
             // Get recent conversations
             let conversations;
             try {
-                conversations = await getRecentConversations(10);
+                conversations = await getRecentConversations(10, extensionContext);
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}. Make sure Cursor is installed and you have used it recently.`);
                 return null;
