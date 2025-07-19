@@ -12,8 +12,8 @@ function formatCodeDiff(oldString, newString) {
     const oldLines = oldString.split('\n');
     const newLines = newString.split('\n');
     
-    // Create a clean diff block
-    let diffBlock = '```diff\n';
+    // Create a clean diff block with separators
+    let diffBlock = '---\n```diff\n';
     
     // For simple single-line changes
     if (oldLines.length === 1 && newLines.length === 1) {
@@ -33,7 +33,7 @@ function formatCodeDiff(oldString, newString) {
         }
     }
     
-    diffBlock += '```';
+    diffBlock += '```\n---';
     return diffBlock;
 }
 
@@ -185,8 +185,8 @@ function formatThinkingBlocks(thinkingBlocks) {
     
     for (const thinking of thinkingBlocks) {
         if (thinking && thinking.trim()) {
-            // Show all thinking content in collapsible details
-            formattedThinking += `<details>\n<summary>🤔 Thinking</summary>\n\n${thinking.trim()}\n\n</details>\n\n`;
+            // Show all thinking content in collapsible details wrapped in think tags
+            formattedThinking += `<think>\n<details>\n<summary>🤔 Thinking</summary>\n\n${thinking.trim()}\n\n</details>\n</think>\n\n`;
         }
     }
     
@@ -282,7 +282,13 @@ function generateMarkdownConversation(conversation) {
     
     // Add conversation metadata
     if (conversation.composer_data?.name) {
-        markdown += `**Conversation ID:** \`${conversation.composer_id.substring(0, 8)}\`  \n`;
+        markdown += `**Conversation ID:** \`${conversation.composer_id}\`  \n`;
+    }
+    
+    // Add request ID (show only the most recent one, which is what's visible in Cursor UI)
+    if (conversation.request_ids && conversation.request_ids.length > 0) {
+        const mostRecentRequestId = conversation.request_ids[conversation.request_ids.length - 1];
+        markdown += `**Request ID:** \`${mostRecentRequestId}\`  \n`;
     }
     
     markdown += `\n---\n\n`;
@@ -378,7 +384,7 @@ function generateConversationFilename(conversation) {
         .substring(0, 50)
         .toLowerCase();
     
-    return `${safeTitle}_${conversation.composer_id.substring(0, 8)}.md`;
+    return `${safeTitle}_${conversation.composer_id}.md`;
 }
 
 module.exports = {

@@ -338,12 +338,21 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
         }
     }
     
+    // Extract unique request IDs from usageUuid fields
+    const requestIds = new Set();
+    for (const bubble of sortedBubbles) {
+        if (bubble.usageUuid) {
+            requestIds.add(bubble.usageUuid);
+        }
+    }
+    
     return {
         composer_id: composerId,
         composer_data: composerData,
         messages: messages,
         code_diffs: composerCodeDiffs,
-        checkpoints: composerCheckpoints
+        checkpoints: composerCheckpoints,
+        request_ids: Array.from(requestIds)
     };
 }
 
