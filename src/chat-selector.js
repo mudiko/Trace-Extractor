@@ -4,9 +4,9 @@ const { reconstructConversation, getConversationSummary } = require('./conversat
 /**
  * Get recent conversations from Cursor data
  */
-async function getRecentConversations(limit = 10) {
+async function getRecentConversations(limit = 10, extensionContext = null) {
     console.log('Extracting Cursor data...');
-    const extractedData = await extractCursorDiskKV();
+    const extractedData = await extractCursorDiskKV(null, extensionContext);
     
     if (!extractedData.composers || Object.keys(extractedData.composers).length === 0) {
         console.log('No conversations found');

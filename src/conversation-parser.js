@@ -50,16 +50,17 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
             .sort((a, b) => a.timestamp - b.timestamp);
     }
     
-    // Group bubbles by usageUuid for assistant messages, but keep user messages separate
+    // Group bubbles into natural conversation flow - preserve bubble order but create logical message boundaries
     const messageGroups = [];
-    const usageUuidGroups = new Map();
+    let currentAssistantGroup = null;
     
     for (const bubble of sortedBubbles) {
         // Skip bubbles without meaningful conversation content
         if (!bubble.text && !bubble.thinking && !bubble.toolFormerData) continue;
         
         if (bubble.type === 1) {
-            // User message - always create a new group
+            // User message - always create a new group and end any current assistant group
+            currentAssistantGroup = null;
             messageGroups.push({
                 type: 'user',
                 bubbles: [bubble],
@@ -67,21 +68,36 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                 usageUuid: bubble.usageUuid || null
             });
         } else {
-            // Assistant message - group by usageUuid
-            const usageUuid = bubble.usageUuid || `bubble-${bubble.id}`;
+            // Assistant message - check if we need to start a new group or continue existing one
+            // Start a new assistant group if:
+            // 1. No current group exists
+            // 2. Current bubble has a different usageUuid than the current group AND has a usageUuid
+            // 3. There's a significant gap or change in conversation flow
             
-            if (!usageUuidGroups.has(usageUuid)) {
-                const group = {
+            const bubbleUsageUuid = bubble.usageUuid || null;
+            const shouldStartNewGroup = !currentAssistantGroup || 
+                (bubbleUsageUuid && currentAssistantGroup.usageUuid && 
+                 bubbleUsageUuid !== currentAssistantGroup.usageUuid && 
+                 currentAssistantGroup.usageUuid !== 'mixed');
+            
+            if (shouldStartNewGroup) {
+                currentAssistantGroup = {
                     type: 'assistant',
                     bubbles: [],
                     timestamp: bubble.timestamp || bubble.createdAt || 0,
-                    usageUuid: usageUuid
+                    usageUuid: bubbleUsageUuid || `bubble-${bubble.id}`
                 };
-                usageUuidGroups.set(usageUuid, group);
-                messageGroups.push(group);
+                messageGroups.push(currentAssistantGroup);
             }
             
-            usageUuidGroups.get(usageUuid).bubbles.push(bubble);
+            // Add bubble to current assistant group
+            currentAssistantGroup.bubbles.push(bubble);
+            
+            // Update group metadata if mixing different usageUuids
+            if (bubbleUsageUuid && currentAssistantGroup.usageUuid !== bubbleUsageUuid && 
+                !currentAssistantGroup.usageUuid.startsWith('bubble-')) {
+                currentAssistantGroup.usageUuid = 'mixed';
+            }
         }
     }
     
@@ -166,39 +182,119 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                 if (bubble.toolFormerData) {
                     const toolData = bubble.toolFormerData;
                     let parameters = {};
+                    
+                    // More robust JSON parsing
                     try {
-                        parameters = toolData.rawArgs ? JSON.parse(toolData.rawArgs) : {};
+                        if (toolData.rawArgs) {
+                            if (typeof toolData.rawArgs === 'string') {
+                                parameters = JSON.parse(toolData.rawArgs);
+                            } else {
+                                parameters = toolData.rawArgs;
+                            }
+                        }
                     } catch (e) {
-                        parameters = { rawArgs: toolData.rawArgs };
+                        // Try to extract parameters from malformed JSON
+                        try {
+                            const rawArgs = toolData.rawArgs || '';
+                            // Basic parameter extraction for common patterns
+                            const paramMatches = rawArgs.match(/"([^"]+)"\s*:\s*"([^"]*)"/g);
+                            if (paramMatches) {
+                                paramMatches.forEach(match => {
+                                    const [, key, value] = match.match(/"([^"]+)"\s*:\s*"([^"]*)"/);
+                                    parameters[key] = value;
+                                });
+                            } else {
+                                parameters = { rawArgs: rawArgs };
+                            }
+                        } catch (e2) {
+                            parameters = { rawArgs: toolData.rawArgs };
+                        }
                     }
                     
-                    // Better tool name detection
-                    let toolName = toolData.name || toolData.tool;
+                    // Enhanced tool name detection
+                    let toolName = toolData.name || toolData.tool || toolData.toolName;
                     
-                    // If no tool name found, try to infer from other fields
+                    // If no tool name found, try to infer from multiple sources
                     if (!toolName || toolName === 'unknown_tool') {
-                        if (toolData.rawArgs) {
-                            const rawArgs = toolData.rawArgs;
+                        // Check parameters first
+                        if (parameters.file_path || parameters.path || parameters.target_file) {
+                            if (parameters.old_string || parameters.new_string) {
+                                toolName = 'Edit';
+                            } else if (parameters.content) {
+                                toolName = 'Write';
+                            } else {
+                                toolName = 'Read';
+                            }
+                        } else if (parameters.command) {
+                            toolName = 'Bash';
+                        } else if (parameters.pattern || parameters.query) {
+                            toolName = 'Grep';
+                        } else if (parameters.relative_workspace_path) {
+                            toolName = 'LS';
+                        }
+                        
+                        // Fallback to rawArgs analysis
+                        if (!toolName && toolData.rawArgs) {
+                            const rawArgs = String(toolData.rawArgs);
                             if (rawArgs.includes('file_path') || rawArgs.includes('"path"')) {
                                 if (rawArgs.includes('old_string') || rawArgs.includes('new_string')) {
-                                    toolName = 'search_replace';
+                                    toolName = 'Edit';
                                 } else if (rawArgs.includes('content')) {
-                                    toolName = 'write_file';
+                                    toolName = 'Write';
                                 } else {
-                                    toolName = 'read_file';
+                                    toolName = 'Read';
                                 }
                             } else if (rawArgs.includes('command')) {
-                                toolName = 'run_terminal_cmd';
+                                toolName = 'Bash';
                             } else if (rawArgs.includes('pattern') || rawArgs.includes('query')) {
-                                toolName = 'grep_search';
+                                toolName = 'Grep';
                             } else if (rawArgs.includes('relative_workspace_path')) {
-                                toolName = 'list_dir';
+                                toolName = 'LS';
                             }
                         }
                         
-                        // If still no tool name, use a generic one
+                        // If still no tool name, use generic
                         if (!toolName) {
-                            toolName = 'unknown_tool';
+                            toolName = 'Tool';
+                        }
+                    }
+                    
+                    // For edit_file tools, extract diff from result
+                    let diffExtracted = false;
+                    if (toolName === 'edit_file' && toolData.result) {
+                        try {
+                            const result = JSON.parse(toolData.result);
+                            if (result.diff && result.diff.chunks) {
+                                // Extract old_string and new_string from diff chunks
+                                let oldString = '';
+                                let newString = '';
+                                
+                                result.diff.chunks.forEach(chunk => {
+                                    if (chunk.diffString) {
+                                        const lines = chunk.diffString.split('\n');
+                                        lines.forEach(line => {
+                                            if (line.startsWith('- ')) {
+                                                oldString += line.substring(2) + '\n';
+                                            } else if (line.startsWith('+ ')) {
+                                                newString += line.substring(2) + '\n';
+                                            } else if (line.startsWith('  ')) {
+                                                // Context line - add to both
+                                                const contextLine = line.substring(2) + '\n';
+                                                oldString += contextLine;
+                                                newString += contextLine;
+                                            }
+                                        });
+                                    }
+                                });
+                                
+                                if (oldString || newString) {
+                                    parameters.old_string = oldString.trim();
+                                    parameters.new_string = newString.trim();
+                                    diffExtracted = true;
+                                }
+                            }
+                        } catch (e) {
+                            // Fall back to normal processing
                         }
                     }
                     
@@ -207,7 +303,8 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                         parameters: parameters,
                         status: toolData.status,
                         result: toolData.result,
-                        raw_content: JSON.stringify(toolData, null, 2)
+                        raw_content: JSON.stringify(toolData, null, 2),
+                        diff_extracted: diffExtracted
                     });
                 }
                 
@@ -241,12 +338,21 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
         }
     }
     
+    // Extract unique request IDs from usageUuid fields
+    const requestIds = new Set();
+    for (const bubble of sortedBubbles) {
+        if (bubble.usageUuid) {
+            requestIds.add(bubble.usageUuid);
+        }
+    }
+    
     return {
         composer_id: composerId,
         composer_data: composerData,
         messages: messages,
         code_diffs: composerCodeDiffs,
-        checkpoints: composerCheckpoints
+        checkpoints: composerCheckpoints,
+        request_ids: Array.from(requestIds)
     };
 }
 

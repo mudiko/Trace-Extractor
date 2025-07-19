@@ -17,12 +17,12 @@ function activate(context) {
     // Register the main commands
     const disposable = vscode.commands.registerCommand('trace-extractor.selectChat', async () => {
         console.log('trace-extractor.selectChat command executed');
-        await showConversationSelector();
+        await showConversationSelector(context);
     });
     
     const disposableJSON = vscode.commands.registerCommand('trace-extractor.selectChatJSON', async () => {
         console.log('trace-extractor.selectChatJSON command executed');
-        await showConversationSelectorJSON();
+        await showConversationSelectorJSON(context);
     });
     
     context.subscriptions.push(disposable, disposableJSON);
