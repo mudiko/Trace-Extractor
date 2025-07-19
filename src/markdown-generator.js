@@ -171,16 +171,31 @@ function formatToolCallAction(toolCall) {
             // For unknown tools, provide more helpful information
             if (toolName === 'unknown_tool' || !toolName) {
                 desc = 'Unknown Tool';
+                
                 // Try to extract meaningful info from raw_content if available
                 if (toolCall.raw_content) {
                     try {
                         const rawData = JSON.parse(toolCall.raw_content);
                         if (rawData.additionalData?.status === 'error') {
-                            desc += ' (failed execution)';
+                            desc += ' (execution failed)';
+                        } else if (rawData.status) {
+                            desc += ` (${rawData.status})`;
                         }
                     } catch (e) {
-                        // If parsing fails, keep default description
+                        // If parsing fails, check for any useful raw content
+                        if (toolCall.raw_content.includes('error')) {
+                            desc += ' (error)';
+                        }
                     }
+                } else if (toolCall.status) {
+                    desc += ` (${toolCall.status})`;
+                } else {
+                    desc += ' (no data available)';
+                }
+                
+                // Show timing info if available
+                if (toolCall.timestamp) {
+                    desc += ` at ${new Date(toolCall.timestamp).toLocaleTimeString()}`;
                 }
             }
             
@@ -351,8 +366,77 @@ function generateMarkdownConversation(conversation) {
                     
                     markdown += `📋 ${toolAction}\n\n`;
                     
-                    // Add formatted result if it's an LS command
-                    if (toolCall.tool_name && toolCall.tool_name.toLowerCase() === 'codebase_search' && toolCall.result) {
+                    // Add tool results if available
+                    if (toolCall.result) {
+                        let resultDisplay = '';
+                        
+                        // Handle different result types
+                        try {
+                            // Try to parse as JSON first
+                            const result = JSON.parse(toolCall.result);
+                            
+                            // Special handling for different tool types
+                            if (toolCall.tool_name === 'run_terminal_cmd') {
+                                // Show command output
+                                if (result.contents || result.output) {
+                                    const output = result.contents || result.output;
+                                    resultDisplay = `<details>\n<summary>📤 Command Output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n\n</details>`;
+                                } else if (result.error) {
+                                    resultDisplay = `<details>\n<summary>❌ Command Error</summary>\n\n\`\`\`\n${result.error}\n\`\`\`\n\n</details>`;
+                                }
+                            } else if (toolCall.tool_name === 'read_file') {
+                                // Show file content preview
+                                if (result.contents) {
+                                    const preview = result.contents.length > 500 ? 
+                                        result.contents.substring(0, 497) + '...' : result.contents;
+                                    resultDisplay = `<details>\n<summary>📄 File Content (${result.contents.length} chars)</summary>\n\n\`\`\`\n${preview}\n\`\`\`\n\n</details>`;
+                                }
+                            } else if (toolCall.tool_name === 'list_dir') {
+                                // Use existing LS formatting
+                                const formattedResult = formatLSResult(toolCall.result, toolCall);
+                                if (formattedResult) {
+                                    resultDisplay = formattedResult;
+                                }
+                            } else if (toolCall.tool_name === 'codebase_search') {
+                                // Use existing codebase search formatting
+                                if (result.codeResults && result.codeResults.length > 0) {
+                                    const formattedResult = formatLSResult(toolCall.result, toolCall);
+                                    if (formattedResult) {
+                                        resultDisplay = formattedResult;
+                                    }
+                                }
+                            } else if (toolCall.tool_name === 'grep_search') {
+                                // Show search results
+                                if (result.matches || result.results) {
+                                    const matches = result.matches || result.results;
+                                    resultDisplay = `<details>\n<summary>🔍 Search Results (${matches.length} matches)</summary>\n\n\`\`\`\n${matches.slice(0, 10).join('\n')}\n\`\`\`\n\n</details>`;
+                                }
+                            } else {
+                                // Generic result display for other tools
+                                const resultStr = JSON.stringify(result, null, 2);
+                                if (resultStr.length > 50) {
+                                    resultDisplay = `<details>\n<summary>📋 Result</summary>\n\n\`\`\`json\n${resultStr}\n\`\`\`\n\n</details>`;
+                                }
+                            }
+                        } catch (e) {
+                            // If not JSON, treat as plain text result
+                            const plainResult = String(toolCall.result);
+                            if (plainResult.trim() && plainResult.length > 10) {
+                                if (toolCall.tool_name === 'run_terminal_cmd') {
+                                    resultDisplay = `<details>\n<summary>📤 Command Output</summary>\n\n\`\`\`\n${plainResult}\n\`\`\`\n\n</details>`;
+                                } else {
+                                    resultDisplay = `<details>\n<summary>📋 Result</summary>\n\n\`\`\`\n${plainResult}\n\`\`\`\n\n</details>`;
+                                }
+                            }
+                        }
+                        
+                        if (resultDisplay) {
+                            markdown += `${resultDisplay}\n\n`;
+                        }
+                    }
+                    
+                    // Legacy: Add formatted result if it's an LS command (kept for compatibility)
+                    else if (toolCall.tool_name && toolCall.tool_name.toLowerCase() === 'codebase_search' && toolCall.result) {
                         try {
                             const result = JSON.parse(toolCall.result);
                             if (result.codeResults && result.codeResults.length > 0) {

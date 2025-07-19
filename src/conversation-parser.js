@@ -253,15 +253,25 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                             }
                         }
                         
-                        // If still no tool name, use generic
+                        // If still no tool name, use the actual tool_name or make it descriptive
                         if (!toolName) {
-                            // Check if this was originally an unknown_tool
-                            if (toolData.tool_name === 'unknown_tool' || toolData.name === 'unknown_tool' || 
+                            // Always use the actual tool_name from Cursor if available
+                            if (toolData.tool_name && toolData.tool_name !== 'unknown_tool') {
+                                toolName = toolData.tool_name.replace(/_/g, ' ')
+                                    .replace(/\b\w/g, l => l.toUpperCase());
+                            } else if (toolData.tool_name === 'unknown_tool' || toolData.name === 'unknown_tool' || 
                                 toolData.toolName === 'unknown_tool' || 
                                 (toolData.rawArgs && String(toolData.rawArgs).includes('unknown_tool'))) {
                                 toolName = 'Unknown Tool';
                             } else {
-                                toolName = 'Tool';
+                                // Last resort - show whatever tool identifier we have
+                                const fallbackName = toolData.tool_name || toolData.name || toolData.toolName;
+                                if (fallbackName) {
+                                    toolName = fallbackName.replace(/_/g, ' ')
+                                        .replace(/\b\w/g, l => l.toUpperCase());
+                                } else {
+                                    toolName = 'Tool (no name)';
+                                }
                             }
                         }
                     }
