@@ -113,9 +113,7 @@ function formatToolCallAction(toolCall) {
         case 'terminal':
             let cmdDesc = 'Run command';
             if (params.command) {
-                const cmdPreview = params.command.length > 60 ? 
-                    params.command.substring(0, 57) + '...' : params.command;
-                cmdDesc = `Run command: \`${cmdPreview}\``;
+                cmdDesc = `Run command: \`${params.command}\``;
                 if (params.explanation) {
                     cmdDesc += ` - ${params.explanation}`;
                 }
@@ -129,8 +127,7 @@ function formatToolCallAction(toolCall) {
             let searchDesc = 'Search';
             if (params.query || params.pattern) {
                 const query = params.query || params.pattern;
-                const queryPreview = query.length > 40 ? query.substring(0, 37) + '...' : query;
-                searchDesc = `Search: \`${queryPreview}\``;
+                searchDesc = `Search: \`${query}\``;
                 if (params.include_pattern) {
                     searchDesc += ` in \`${params.include_pattern}\``;
                 }
@@ -165,8 +162,28 @@ function formatToolCallAction(toolCall) {
             return `Web fetch`;
             
         default:
-            // Generic handling for unknown tools
-            let desc = toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            // Generic handling for unknown tools - ensure we always return meaningful text
+            let desc = toolName || 'Unknown Tool';  // Fallback in case toolName is empty
+            if (desc !== 'Unknown Tool') {
+                desc = toolName.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+            }
+            
+            // For unknown tools, provide more helpful information
+            if (toolName === 'unknown_tool' || !toolName) {
+                desc = 'Unknown Tool';
+                // Try to extract meaningful info from raw_content if available
+                if (toolCall.raw_content) {
+                    try {
+                        const rawData = JSON.parse(toolCall.raw_content);
+                        if (rawData.additionalData?.status === 'error') {
+                            desc += ' (failed execution)';
+                        }
+                    } catch (e) {
+                        // If parsing fails, keep default description
+                    }
+                }
+            }
+            
             if (params.explanation) {
                 desc += ` - ${params.explanation}`;
             }
@@ -324,22 +341,28 @@ function generateMarkdownConversation(conversation) {
             if (message.content.tool_calls.length > 0) {
                 for (const toolCall of message.content.tool_calls) {
                     let toolAction = formatToolCallAction(toolCall);
-                    if (toolAction) {
-                        markdown += `📋 ${toolAction}\n\n`;
-                        
-                        // Add formatted result if it's an LS command
-                        if (toolCall.tool_name && toolCall.tool_name.toLowerCase() === 'codebase_search' && toolCall.result) {
-                            try {
-                                const result = JSON.parse(toolCall.result);
-                                if (result.codeResults && result.codeResults.length > 0) {
-                                    const formattedResult = formatLSResult(toolCall.result, toolCall);
-                                    if (formattedResult) {
-                                        markdown += `${formattedResult}\n\n`;
-                                    }
+                    
+                    // Ensure we always have meaningful text - never show just the emoji
+                    if (!toolAction || toolAction.trim() === '') {
+                        toolAction = toolCall.tool_name ? 
+                            toolCall.tool_name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()) : 
+                            'Tool execution';
+                    }
+                    
+                    markdown += `📋 ${toolAction}\n\n`;
+                    
+                    // Add formatted result if it's an LS command
+                    if (toolCall.tool_name && toolCall.tool_name.toLowerCase() === 'codebase_search' && toolCall.result) {
+                        try {
+                            const result = JSON.parse(toolCall.result);
+                            if (result.codeResults && result.codeResults.length > 0) {
+                                const formattedResult = formatLSResult(toolCall.result, toolCall);
+                                if (formattedResult) {
+                                    markdown += `${formattedResult}\n\n`;
                                 }
-                            } catch (e) {
-                                // If it's not JSON, skip formatting
                             }
+                        } catch (e) {
+                            // If it's not JSON, skip formatting
                         }
                     }
                 }

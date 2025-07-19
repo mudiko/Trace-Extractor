@@ -212,7 +212,7 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                     }
                     
                     // Enhanced tool name detection
-                    let toolName = toolData.name || toolData.tool || toolData.toolName;
+                    let toolName = toolData.name || toolData.tool || toolData.toolName || toolData.tool_name;
                     
                     // If no tool name found, try to infer from multiple sources
                     if (!toolName || toolName === 'unknown_tool') {
@@ -255,7 +255,14 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                         
                         // If still no tool name, use generic
                         if (!toolName) {
-                            toolName = 'Tool';
+                            // Check if this was originally an unknown_tool
+                            if (toolData.tool_name === 'unknown_tool' || toolData.name === 'unknown_tool' || 
+                                toolData.toolName === 'unknown_tool' || 
+                                (toolData.rawArgs && String(toolData.rawArgs).includes('unknown_tool'))) {
+                                toolName = 'Unknown Tool';
+                            } else {
+                                toolName = 'Tool';
+                            }
                         }
                     }
                     
