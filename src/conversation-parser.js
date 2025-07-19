@@ -50,16 +50,17 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
             .sort((a, b) => a.timestamp - b.timestamp);
     }
     
-    // Group bubbles by usageUuid for assistant messages, but keep user messages separate
+    // Group bubbles into natural conversation flow - preserve bubble order but create logical message boundaries
     const messageGroups = [];
-    const usageUuidGroups = new Map();
+    let currentAssistantGroup = null;
     
     for (const bubble of sortedBubbles) {
         // Skip bubbles without meaningful conversation content
         if (!bubble.text && !bubble.thinking && !bubble.toolFormerData) continue;
         
         if (bubble.type === 1) {
-            // User message - always create a new group
+            // User message - always create a new group and end any current assistant group
+            currentAssistantGroup = null;
             messageGroups.push({
                 type: 'user',
                 bubbles: [bubble],
@@ -67,21 +68,36 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                 usageUuid: bubble.usageUuid || null
             });
         } else {
-            // Assistant message - group by usageUuid
-            const usageUuid = bubble.usageUuid || `bubble-${bubble.id}`;
+            // Assistant message - check if we need to start a new group or continue existing one
+            // Start a new assistant group if:
+            // 1. No current group exists
+            // 2. Current bubble has a different usageUuid than the current group AND has a usageUuid
+            // 3. There's a significant gap or change in conversation flow
             
-            if (!usageUuidGroups.has(usageUuid)) {
-                const group = {
+            const bubbleUsageUuid = bubble.usageUuid || null;
+            const shouldStartNewGroup = !currentAssistantGroup || 
+                (bubbleUsageUuid && currentAssistantGroup.usageUuid && 
+                 bubbleUsageUuid !== currentAssistantGroup.usageUuid && 
+                 currentAssistantGroup.usageUuid !== 'mixed');
+            
+            if (shouldStartNewGroup) {
+                currentAssistantGroup = {
                     type: 'assistant',
                     bubbles: [],
                     timestamp: bubble.timestamp || bubble.createdAt || 0,
-                    usageUuid: usageUuid
+                    usageUuid: bubbleUsageUuid || `bubble-${bubble.id}`
                 };
-                usageUuidGroups.set(usageUuid, group);
-                messageGroups.push(group);
+                messageGroups.push(currentAssistantGroup);
             }
             
-            usageUuidGroups.get(usageUuid).bubbles.push(bubble);
+            // Add bubble to current assistant group
+            currentAssistantGroup.bubbles.push(bubble);
+            
+            // Update group metadata if mixing different usageUuids
+            if (bubbleUsageUuid && currentAssistantGroup.usageUuid !== bubbleUsageUuid && 
+                !currentAssistantGroup.usageUuid.startsWith('bubble-')) {
+                currentAssistantGroup.usageUuid = 'mixed';
+            }
         }
     }
     

@@ -9,7 +9,7 @@ const { reconstructConversation } = require('../src/conversation-parser');
 const { generateMarkdownConversation } = require('../src/markdown-generator');
 
 async function testSpecificRequest() {
-    const targetRequestId = 'a528de3d-b5a6-454f-bf73-4d829383ba05';
+    const targetRequestId = process.argv[2] || 'bde16f1d-48ae-4787-bfc7-45dba72f5c4e';
     
     console.log(`🔍 Testing specific request ID: ${targetRequestId}\n`);
     
