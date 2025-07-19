@@ -4,6 +4,40 @@
  */
 
 /**
+ * Format code diffs in SpecStory style
+ */
+function formatCodeDiff(oldString, newString) {
+    if (!oldString || !newString) return null;
+    
+    const oldLines = oldString.split('\n');
+    const newLines = newString.split('\n');
+    
+    // Create a clean diff block
+    let diffBlock = '```diff\n';
+    
+    // For simple single-line changes
+    if (oldLines.length === 1 && newLines.length === 1) {
+        diffBlock += `- ${oldLines[0]}\n`;
+        diffBlock += `+ ${newLines[0]}\n`;
+    } else {
+        // For multi-line changes, show context
+        const maxLines = Math.max(oldLines.length, newLines.length);
+        
+        for (let i = 0; i < maxLines; i++) {
+            if (i < oldLines.length) {
+                diffBlock += `- ${oldLines[i]}\n`;
+            }
+            if (i < newLines.length) {
+                diffBlock += `+ ${newLines[i]}\n`;
+            }
+        }
+    }
+    
+    diffBlock += '```';
+    return diffBlock;
+}
+
+/**
  * Format tool call with detailed parameters and results
  */
 function formatToolCallAction(toolCall) {
@@ -48,31 +82,10 @@ function formatToolCallAction(toolCall) {
                 const fileName = filePath.split('/').pop();
                 editDesc = `Edit file: \`${fileName}\``;
                 
-                // Add details about the edit
+                // Add diff details - no truncation, clean formatting
                 if (params.old_string && params.new_string) {
-                    const oldLines = params.old_string.split('\n');
-                    const newLines = params.new_string.split('\n');
-                    
-                    const totalOldLength = params.old_string.length;
-                    const totalNewLength = params.new_string.length;
-                    
-                    if (oldLines.length <= 4 && newLines.length <= 5 && totalOldLength <= 150 && totalNewLength <= 200) {
-                        editDesc += ` (Replace: "${params.old_string}" → "${params.new_string}")`;
-                    } else {
-                        const oldSummary = oldLines.length > 1 
-                            ? `${oldLines[0]}...${oldLines[oldLines.length - 1]}`
-                            : oldLines[0];
-                        const newSummary = newLines.length > 1
-                            ? `${newLines[0]}...${newLines[newLines.length - 1]}`
-                            : newLines[0];
-                        
-                        const oldPreview = oldSummary.length > 60 ? 
-                            oldSummary.substring(0, 57) + '...' : oldSummary;
-                        const newPreview = newSummary.length > 60 ? 
-                            newSummary.substring(0, 57) + '...' : newSummary;
-                        
-                        editDesc += ` (Replace: "${oldPreview}" → "${newPreview}")`;
-                    }
+                    // Store the diff for later display after the tool description
+                    editDesc += '\n\n' + formatCodeDiff(params.old_string, params.new_string);
                 }
                 
                 if (params.explanation) {
@@ -167,17 +180,12 @@ function formatToolCallAction(toolCall) {
 function formatThinkingBlocks(thinkingBlocks) {
     if (!thinkingBlocks || thinkingBlocks.length === 0) return '';
     
-    // Filter out duplicates and process thinking content
-    const uniqueThinking = [...new Set(thinkingBlocks)];
-    
+    // Process all thinking content without filtering
     let formattedThinking = '';
     
-    for (const thinking of uniqueThinking) {
-        if (thinking.trim() === '_[Assistant thinking...]_') {
-            // Handle placeholder thinking indicators
-            formattedThinking += '*[Assistant thinking...]*\n\n';
-        } else if (thinking.trim()) {
-            // Handle actual thinking content
+    for (const thinking of thinkingBlocks) {
+        if (thinking && thinking.trim()) {
+            // Show all thinking content in collapsible details
             formattedThinking += `<details>\n<summary>🤔 Thinking</summary>\n\n${thinking.trim()}\n\n</details>\n\n`;
         }
     }
