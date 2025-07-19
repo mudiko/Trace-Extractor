@@ -166,39 +166,119 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                 if (bubble.toolFormerData) {
                     const toolData = bubble.toolFormerData;
                     let parameters = {};
+                    
+                    // More robust JSON parsing
                     try {
-                        parameters = toolData.rawArgs ? JSON.parse(toolData.rawArgs) : {};
+                        if (toolData.rawArgs) {
+                            if (typeof toolData.rawArgs === 'string') {
+                                parameters = JSON.parse(toolData.rawArgs);
+                            } else {
+                                parameters = toolData.rawArgs;
+                            }
+                        }
                     } catch (e) {
-                        parameters = { rawArgs: toolData.rawArgs };
+                        // Try to extract parameters from malformed JSON
+                        try {
+                            const rawArgs = toolData.rawArgs || '';
+                            // Basic parameter extraction for common patterns
+                            const paramMatches = rawArgs.match(/"([^"]+)"\s*:\s*"([^"]*)"/g);
+                            if (paramMatches) {
+                                paramMatches.forEach(match => {
+                                    const [, key, value] = match.match(/"([^"]+)"\s*:\s*"([^"]*)"/);
+                                    parameters[key] = value;
+                                });
+                            } else {
+                                parameters = { rawArgs: rawArgs };
+                            }
+                        } catch (e2) {
+                            parameters = { rawArgs: toolData.rawArgs };
+                        }
                     }
                     
-                    // Better tool name detection
-                    let toolName = toolData.name || toolData.tool;
+                    // Enhanced tool name detection
+                    let toolName = toolData.name || toolData.tool || toolData.toolName;
                     
-                    // If no tool name found, try to infer from other fields
+                    // If no tool name found, try to infer from multiple sources
                     if (!toolName || toolName === 'unknown_tool') {
-                        if (toolData.rawArgs) {
-                            const rawArgs = toolData.rawArgs;
+                        // Check parameters first
+                        if (parameters.file_path || parameters.path || parameters.target_file) {
+                            if (parameters.old_string || parameters.new_string) {
+                                toolName = 'Edit';
+                            } else if (parameters.content) {
+                                toolName = 'Write';
+                            } else {
+                                toolName = 'Read';
+                            }
+                        } else if (parameters.command) {
+                            toolName = 'Bash';
+                        } else if (parameters.pattern || parameters.query) {
+                            toolName = 'Grep';
+                        } else if (parameters.relative_workspace_path) {
+                            toolName = 'LS';
+                        }
+                        
+                        // Fallback to rawArgs analysis
+                        if (!toolName && toolData.rawArgs) {
+                            const rawArgs = String(toolData.rawArgs);
                             if (rawArgs.includes('file_path') || rawArgs.includes('"path"')) {
                                 if (rawArgs.includes('old_string') || rawArgs.includes('new_string')) {
-                                    toolName = 'search_replace';
+                                    toolName = 'Edit';
                                 } else if (rawArgs.includes('content')) {
-                                    toolName = 'write_file';
+                                    toolName = 'Write';
                                 } else {
-                                    toolName = 'read_file';
+                                    toolName = 'Read';
                                 }
                             } else if (rawArgs.includes('command')) {
-                                toolName = 'run_terminal_cmd';
+                                toolName = 'Bash';
                             } else if (rawArgs.includes('pattern') || rawArgs.includes('query')) {
-                                toolName = 'grep_search';
+                                toolName = 'Grep';
                             } else if (rawArgs.includes('relative_workspace_path')) {
-                                toolName = 'list_dir';
+                                toolName = 'LS';
                             }
                         }
                         
-                        // If still no tool name, use a generic one
+                        // If still no tool name, use generic
                         if (!toolName) {
-                            toolName = 'unknown_tool';
+                            toolName = 'Tool';
+                        }
+                    }
+                    
+                    // For edit_file tools, extract diff from result
+                    let diffExtracted = false;
+                    if (toolName === 'edit_file' && toolData.result) {
+                        try {
+                            const result = JSON.parse(toolData.result);
+                            if (result.diff && result.diff.chunks) {
+                                // Extract old_string and new_string from diff chunks
+                                let oldString = '';
+                                let newString = '';
+                                
+                                result.diff.chunks.forEach(chunk => {
+                                    if (chunk.diffString) {
+                                        const lines = chunk.diffString.split('\n');
+                                        lines.forEach(line => {
+                                            if (line.startsWith('- ')) {
+                                                oldString += line.substring(2) + '\n';
+                                            } else if (line.startsWith('+ ')) {
+                                                newString += line.substring(2) + '\n';
+                                            } else if (line.startsWith('  ')) {
+                                                // Context line - add to both
+                                                const contextLine = line.substring(2) + '\n';
+                                                oldString += contextLine;
+                                                newString += contextLine;
+                                            }
+                                        });
+                                    }
+                                });
+                                
+                                if (oldString || newString) {
+                                    parameters.old_string = oldString.trim();
+                                    parameters.new_string = newString.trim();
+                                    diffExtracted = true;
+                                }
+                            }
+                        } catch (e) {
+                            // Fall back to normal processing
                         }
                     }
                     
@@ -207,7 +287,8 @@ function reconstructConversation(composerId, bubbles, checkpoints, codeDiffs, co
                         parameters: parameters,
                         status: toolData.status,
                         result: toolData.result,
-                        raw_content: JSON.stringify(toolData, null, 2)
+                        raw_content: JSON.stringify(toolData, null, 2),
+                        diff_extracted: diffExtracted
                     });
                 }
                 

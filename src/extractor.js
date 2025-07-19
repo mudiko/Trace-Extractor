@@ -250,14 +250,23 @@ function parseMessageContent(content) {
         parsed.thinking_blocks.push(thinkingMatch[1].trim());
     }
     
-    // Extract code blocks
-    const codePattern = /```(\w+)?\n([\s\S]*?)\n```/g;
+    // Extract code blocks - improved pattern to handle various formats
+    const codePattern = /```(\w+)?([^\n]*)?\n?([\s\S]*?)```/g;
     let codeMatch;
     
     while ((codeMatch = codePattern.exec(content)) !== null) {
+        // Handle both "```lang\ncode```" and "```code```" formats
+        let language = codeMatch[1] || 'text';
+        let code = codeMatch[3] || codeMatch[2] || '';
+        
+        // If no language specified but first part looks like code, use it
+        if (!codeMatch[1] && codeMatch[2] && !codeMatch[2].includes('\n')) {
+            code = codeMatch[2];
+        }
+        
         parsed.code_blocks.push({
-            language: codeMatch[1] || 'text',
-            code: codeMatch[2].trim()
+            language: language,
+            code: code.trim()
         });
     }
     
