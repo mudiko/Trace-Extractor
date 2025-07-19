@@ -17,7 +17,7 @@ There are two ways to install the extension:
 ### 2. Using NPM (Recommended)
 
 1. Run `npm install` to install dependencies.
-2. Run `npm run install` to build and install the extension directly into Cursor.
+2. Run `npm run install-extension` to build and install the extension directly into Cursor.
 
 ### CLI
 

@@ -2,12 +2,12 @@
   "name": "trace-extractor",
   "version": "1.0.0",
   "description": "Trace Extractor - Extract and convert Cursor conversations to markdown with VSCode extension and CLI interface",
-  "main": "extension.js",
+  "main": "./extension.js",
   "scripts": {
     "start": "node cli.js",
     "cli": "node cli.js",
     "build": "vsce package",
-    "install": "npm run build && cursor --install-extension trace-extractor-1.0.0.vsix"
+    "install-extension": "npm run build && cursor --install-extension trace-extractor-1.0.0.vsix"
   },
   "keywords": [
     "cursor",
@@ -22,6 +22,10 @@
   ],
   "author": "Mert Basaran",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mudiko/trace-extractor.git"
+  },
   "dependencies": {
     "chalk": "^5.3.0",
     "inquirer": "^9.2.0",
@@ -36,7 +40,8 @@
     "trace-extractor": "./cli.js"
   },
   "activationEvents": [
-    "*"
+    "onCommand:trace-extractor.selectChat",
+    "onCommand:trace-extractor.selectChatJSON"
   ],
   "contributes": {
     "commands": [
