@@ -50,18 +50,31 @@ async function getRecentConversations(limit = 10, extensionContext = null) {
  * Format conversation for CLI display
  */
 function formatConversationForCLI(conversation, index) {
-    const timeAgo = getTimeAgo(conversation.lastMessageTime);
+    const timeAgo = getTimeAgo(conversation.lastMessageTime || conversation.timestamp);
     const title = conversation.title.length > 50 
         ? conversation.title.substring(0, 47) + '...' 
         : conversation.title;
     
-    const preview = conversation.preview.length > 80
+    const preview = conversation.preview ? (conversation.preview.length > 80
         ? conversation.preview.substring(0, 77) + '...'
-        : conversation.preview;
+        : conversation.preview) : '';
+    
+    // Add source and model info
+    const sourceIcon = conversation.source === 'cursor' ? '🎯' : '🤖';
+    const sourceName = conversation.source === 'cursor' ? 'Cursor' : 'Cline';
+    
+    let modelInfo = '';
+    if (conversation.source === 'cline' && conversation.model) {
+        const shortModelName = conversation.model.replace('xai-featureflagging-grok-4-code-searchreplace-nocompletion-latest', 'Grok-4')
+                                        .replace('xai-featureflagging-grok-', 'Grok-')
+                                        .replace('-code-searchreplace-nocompletion-latest', '')
+                                        .replace('-latest', '');
+        modelInfo = ` • 🧠 ${shortModelName}`;
+    }
     
     return `${index + 1}. ${title}
-   📅 ${timeAgo} • 💬 ${conversation.messageCount} messages
-   📝 ${preview}`;
+   ${sourceIcon} ${sourceName} • 📅 ${timeAgo} • 💬 ${conversation.messageCount} messages${modelInfo}
+   ${preview ? '📝 ' + preview : ''}`;
 }
 
 /**

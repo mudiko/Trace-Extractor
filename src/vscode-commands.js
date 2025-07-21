@@ -5,14 +5,82 @@ const {
     getRecentConversations, 
     formatConversationForVSCode, 
     selectConversationByIndex 
-} = require('./chat-selector');
+} = require('./chat-selector.js');
 const { 
     generateMarkdownConversation, 
     generateConversationFilename 
-} = require('./markdown-generator');
+} = require('./markdown-generator.js');
+const { getRecentClineConversations, extractClineTask } = require('./cline/extractor.js');
+const { parseClineConversation } = require('./cline/conversation-parser.js');
+const { conversationToMarkdown } = require('./cline/markdown-generator.js');
 
 /**
- * Show conversation selection UI in VSCode
+ * Load conversations from multiple sources
+ */
+async function loadAllConversations(extensionContext = null) {
+    let allConversations = [];
+    let cursorCount = 0;
+    let clineCount = 0;
+    
+    // Try to load Cursor conversations
+    try {
+        const cursorConvs = await getRecentConversations(10, extensionContext);
+        cursorCount = cursorConvs.length;
+        allConversations = allConversations.concat(cursorConvs.map(conv => ({...conv, source: 'cursor', extensionTag: 'cursor'})));
+        console.log(`Loaded ${cursorCount} Cursor conversations`);
+    } catch (error) {
+        console.warn('Could not load Cursor conversations:', error.message);
+        vscode.window.showWarningMessage(`Could not load Cursor conversations: ${error.message}`);
+    }
+    
+    // Try to load Cline conversations
+    try {
+        const clineConvs = getRecentClineConversations(10);
+        clineCount = clineConvs.length;
+        allConversations = allConversations.concat(clineConvs.map(conv => ({...conv, source: 'cline', extensionTag: 'xai.grok-dev'})));
+        console.log(`Loaded ${clineCount} Cline conversations`);
+    } catch (error) {
+        console.warn('Could not load Cline conversations:', error.message);
+        vscode.window.showWarningMessage(`Could not load Cline conversations: ${error.message}`);
+    }
+    
+    console.log(`Total conversations loaded: ${allConversations.length} (Cursor: ${cursorCount}, Cline: ${clineCount})`);
+    
+    // Sort by timestamp (most recent first)
+    allConversations.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    
+    return allConversations;
+}
+
+/**
+ * Format conversation for VSCode QuickPick (supports both sources)
+ */
+function formatConversationForVSCodeUnified(conv, index) {
+    const sourceIcon = conv.source === 'cursor' ? '🎯' : '🤖';
+    const sourceName = conv.source === 'cursor' ? 'Cursor' : 'Cline';
+    const extensionTag = conv.extensionTag || (conv.source === 'cursor' ? 'cursor' : 'xai.grok-dev');
+    
+    // Add model information for Cline conversations
+    let modelInfo = '';
+    if (conv.source === 'cline' && conv.model) {
+        const shortModelName = conv.model.replace('xai-featureflagging-grok-4-code-searchreplace-nocompletion-latest', 'Grok-4')
+                                        .replace('xai-featureflagging-grok-', 'Grok-')
+                                        .replace('-code-searchreplace-nocompletion-latest', '')
+                                        .replace('-latest', '');
+        modelInfo = ` • ${shortModelName}`;
+    }
+    
+    return {
+        label: `${index + 1}. ${conv.title}`,
+        description: `${sourceIcon} ${sourceName} (${extensionTag}) • ${conv.messageCount} messages${modelInfo}`,
+        detail: `${new Date(conv.timestamp).toLocaleString()} • ${extensionTag}${modelInfo ? ` • Model: ${conv.model}` : ''}`,
+        conversation: conv.source === 'cursor' ? conv.conversation : conv,
+        index
+    };
+}
+
+/**
+ * Show conversation selection UI in VSCode (unified for both Cursor and Cline)
  */
 async function showConversationSelector(extensionContext = null) {
     try {
@@ -27,26 +95,26 @@ async function showConversationSelector(extensionContext = null) {
                 return null;
             }
             
-            progress.report({ increment: 0, message: "Extracting Cursor data..." });
+            progress.report({ increment: 0, message: "Loading conversations..." });
             
-            // Get recent conversations
+            // Get conversations from all sources
             let conversations;
             try {
-                conversations = await getRecentConversations(10, extensionContext);
+                conversations = await loadAllConversations(extensionContext);
             } catch (error) {
-                vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}. Make sure Cursor is installed and you have used it recently.`);
+                vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}`);
                 return null;
             }
             
             if (conversations.length === 0) {
-                vscode.window.showInformationMessage('No conversations found. Make sure you have used Cursor recently.');
+                vscode.window.showInformationMessage('No conversations found. Make sure you have used Cursor or Cline recently.');
                 return null;
             }
             
             progress.report({ increment: 50, message: "Preparing conversation list..." });
             
             // Format conversations for QuickPick
-            const items = conversations.map((conv, index) => formatConversationForVSCode(conv, index));
+            const items = conversations.map((conv, index) => formatConversationForVSCodeUnified(conv, index));
             
             progress.report({ increment: 100, message: "Ready!" });
             
@@ -57,7 +125,7 @@ async function showConversationSelector(extensionContext = null) {
             return; // User cancelled or no conversations
         }
         
-        const { conversations, items } = result;
+        const { items } = result;
         
         // Show QuickPick
         const selected = await vscode.window.showQuickPick(items, {
@@ -70,8 +138,6 @@ async function showConversationSelector(extensionContext = null) {
             return; // User cancelled
         }
         
-        // No need for save dialog - we'll open content directly
-        
         // Generate and open markdown
         await vscode.window.withProgress({
             location: vscode.ProgressLocation.Notification,
@@ -81,8 +147,18 @@ async function showConversationSelector(extensionContext = null) {
             progress.report({ increment: 0, message: "Generating markdown..." });
             
             try {
-                // Generate markdown
-                const markdown = generateMarkdownConversation(selected.conversation);
+                let markdown;
+                
+                // Handle different conversation sources
+                if (selected.conversation.source === 'cline') {
+                    // Load and parse Cline conversation
+                    const taskData = extractClineTask(selected.conversation.id, selected.conversation.baseDir);
+                    const parsedConversation = parseClineConversation(taskData);
+                    markdown = conversationToMarkdown(parsedConversation);
+                } else {
+                    // Handle Cursor conversations
+                    markdown = generateMarkdownConversation(selected.conversation);
+                }
                 
                 progress.report({ increment: 50, message: "Opening in new file..." });
                 
@@ -98,8 +174,9 @@ async function showConversationSelector(extensionContext = null) {
                 progress.report({ increment: 100, message: "Done!" });
                 
                 // Show success message with save option
+                const sourceLabel = selected.conversation.source === 'cline' ? 'Cline' : 'Cursor';
                 const action = await vscode.window.showInformationMessage(
-                    `Conversation opened in new file! Use Cmd+S to save.`,
+                    `${sourceLabel} conversation opened in new file! Use Cmd+S to save.`,
                     'Save Now'
                 );
                 
@@ -133,26 +210,26 @@ async function showConversationSelectorJSON(extensionContext = null) {
                 return null;
             }
             
-            progress.report({ increment: 0, message: "Extracting Cursor data..." });
+            progress.report({ increment: 0, message: "Loading conversations..." });
             
-            // Get recent conversations
+            // Get conversations from all sources
             let conversations;
             try {
-                conversations = await getRecentConversations(10, extensionContext);
+                conversations = await loadAllConversations(extensionContext);
             } catch (error) {
-                vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}. Make sure Cursor is installed and you have used it recently.`);
+                vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}`);
                 return null;
             }
             
             if (conversations.length === 0) {
-                vscode.window.showInformationMessage('No conversations found. Make sure you have used Cursor recently.');
+                vscode.window.showInformationMessage('No conversations found. Make sure you have used Cursor or Cline recently.');
                 return null;
             }
             
             progress.report({ increment: 50, message: "Preparing conversation list..." });
             
             // Format conversations for QuickPick
-            const items = conversations.map((conv, index) => formatConversationForVSCode(conv, index));
+            const items = conversations.map((conv, index) => formatConversationForVSCodeUnified(conv, index));
             
             progress.report({ increment: 100, message: "Ready!" });
             
@@ -163,7 +240,7 @@ async function showConversationSelectorJSON(extensionContext = null) {
             return; // User cancelled or no conversations
         }
         
-        const { conversations, items } = result;
+        const { items } = result;
         
         // Show QuickPick
         const selected = await vscode.window.showQuickPick(items, {
@@ -185,8 +262,18 @@ async function showConversationSelectorJSON(extensionContext = null) {
             progress.report({ increment: 0, message: "Generating JSON..." });
             
             try {
-                // Generate JSON
-                const jsonContent = JSON.stringify(selected.conversation, null, 2);
+                let jsonContent;
+                
+                // Handle different conversation sources
+                if (selected.conversation.source === 'cline') {
+                    // Load and parse Cline conversation
+                    const taskData = extractClineTask(selected.conversation.id, selected.conversation.baseDir);
+                    const parsedConversation = parseClineConversation(taskData);
+                    jsonContent = JSON.stringify(parsedConversation, null, 2);
+                } else {
+                    // Handle Cursor conversations
+                    jsonContent = JSON.stringify(selected.conversation, null, 2);
+                }
                 
                 progress.report({ increment: 50, message: "Opening in new file..." });
                 
@@ -202,8 +289,9 @@ async function showConversationSelectorJSON(extensionContext = null) {
                 progress.report({ increment: 100, message: "Done!" });
                 
                 // Show success message with save option
+                const sourceLabel = selected.conversation.source === 'cline' ? 'Cline' : 'Cursor';
                 const action = await vscode.window.showInformationMessage(
-                    `Conversation opened as JSON! Use Cmd+S to save.`,
+                    `${sourceLabel} conversation opened as JSON! Use Cmd+S to save.`,
                     'Save Now'
                 );
                 
