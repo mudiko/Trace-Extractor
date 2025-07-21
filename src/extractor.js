@@ -4,11 +4,28 @@ const os = require('os');
 const path = require('path');
 
 /**
+ * Detect current IDE based on environment or process
+ * @returns {string} IDE name: 'cursor' or 'vscode'
+ */
+function detectCurrentIDE() {
+    // Check environment variables and process info
+    if (process.env.TERM_PROGRAM === 'Cursor' || 
+        process.env.VSCODE_CWD && process.env.VSCODE_CWD.includes('Cursor') ||
+        process.execPath && process.execPath.includes('Cursor')) {
+        return 'cursor';
+    }
+    // Default to vscode
+    return 'vscode';
+}
+
+/**
  * Get the path to the Cursor database file based on the operating system
  * Supports custom user data directories when extension context is provided
+ * Now IDE-aware: only checks relevant paths based on detected IDE
  */
 function getDbPath(extensionContext = null) {
     const platform = os.platform();
+    const currentIDE = detectCurrentIDE();
     
     // If we have extension context, try to detect custom user data directory
     if (extensionContext && extensionContext.globalStorageUri) {
@@ -36,18 +53,69 @@ function getDbPath(extensionContext = null) {
         }
     }
     
-    // Default paths when no custom user data directory is detected
+    // IDE-aware default paths
     const homeDir = os.homedir();
-    switch (platform) {
-        case 'darwin': // macOS
-            return path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
-        case 'win32': // Windows
-            return path.join(homeDir, 'AppData', 'Roaming', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
-        case 'linux': // Linux
-            return path.join(homeDir, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
-        default:
-            throw new Error(`Unsupported platform: ${platform}`);
+    let possiblePaths = [];
+    
+    if (currentIDE === 'cursor') {
+        // Only check Cursor-specific paths when running in Cursor
+        switch (platform) {
+            case 'darwin': // macOS
+                possiblePaths = [
+                    path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb'),
+                    path.join(homeDir, '.cursor', 'User', 'globalStorage', 'state.vscdb')
+                ];
+                break;
+            case 'win32': // Windows
+                possiblePaths = [
+                    path.join(homeDir, 'AppData', 'Roaming', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+                ];
+                break;
+            case 'linux': // Linux
+                possiblePaths = [
+                    path.join(homeDir, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb')
+                ];
+                break;
+            default:
+                throw new Error(`Unsupported platform: ${platform}`);
+        }
+    } else {
+        // Only check VS Code-specific paths when running in VS Code
+        switch (platform) {
+            case 'darwin': // macOS
+                possiblePaths = [
+                    path.join(homeDir, 'Library', 'Application Support', 'Code', 'User', 'globalStorage', 'state.vscdb'),
+                    path.join(homeDir, '.vscode', 'User', 'globalStorage', 'state.vscdb')
+                ];
+                break;
+            case 'win32': // Windows
+                possiblePaths = [
+                    path.join(homeDir, 'AppData', 'Roaming', 'Code', 'User', 'globalStorage', 'state.vscdb')
+                ];
+                break;
+            case 'linux': // Linux
+                possiblePaths = [
+                    path.join(homeDir, '.config', 'Code', 'User', 'globalStorage', 'state.vscdb')
+                ];
+                break;
+            default:
+                throw new Error(`Unsupported platform: ${platform}`);
+        }
     }
+    
+    // Try each possible path until we find one that exists
+    for (const dbPath of possiblePaths) {
+        try {
+            const fs = require('fs');
+            fs.accessSync(dbPath);
+            return dbPath;
+        } catch (e) {
+            // Continue to next path
+        }
+    }
+    
+    // If no paths found, return the first one (will cause error later but maintains compatibility)
+    return possiblePaths[0] || path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
 }
 
 /**

@@ -1,8 +1,8 @@
 {
   "name": "trace-extractor",
   "version": "1.0.0",
-  "description": "Trace Extractor - Extract and convert Cursor conversations to markdown with VSCode extension and CLI interface",
-  "main": "./extension.js",
+  "description": "Trace Extractor - Extract and convert Cursor/Cline conversations to markdown with VSCode extension and CLI interface",
+  "main": "extension.js",
   "scripts": {
     "start": "node cli.js",
     "cli": "node cli.js",
@@ -11,6 +11,7 @@
   },
   "keywords": [
     "cursor",
+    "cline",
     "extractor",
     "data-extraction",
     "conversations",

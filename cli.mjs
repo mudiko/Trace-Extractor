@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 
-const fs = require('fs').promises;
-const path = require('path');
-const inquirer = require('inquirer');
-const chalk = require('chalk');
-const ora = require('ora');
-const { 
+import fs from 'fs/promises';
+import path from 'path';
+import inquirer from 'inquirer';
+import chalk from 'chalk';
+import ora from 'ora';
+import { 
     getRecentConversations, 
     formatConversationForCLI, 
     selectConversationByIndex 
-} = require('./src/chat-selector.js');
-const { 
+} from './src/chat-selector.js';
+import { 
     generateMarkdownConversation, 
     generateConversationFilename 
-} = require('./src/markdown-generator.js');
-const { getRecentClineConversations, extractClineTask } = require('./src/cline/extractor.js');
-const { parseClineConversation } = require('./src/cline/conversation-parser.js');
-const { conversationToMarkdown } = require('./src/cline/markdown-generator.js');
+} from './src/markdown-generator.js';
+import { getRecentClineConversations } from './src/cline/extractor.js';
+import { parseClineConversation } from './src/cline/conversation-parser.js';
+import { conversationToMarkdown } from './src/cline/markdown-generator.js';
 
 const BANNER = `
 ╔══════════════════════════════════════════╗
@@ -89,7 +89,10 @@ async function main() {
         console.log(chalk.gray('─'.repeat(80)));
         
         conversations.forEach((conv, index) => {
-            console.log(formatConversationForCLI(conv, index));
+            const sourceIcon = conv.source === 'cursor' ? '🎯' : '🤖';
+            const sourceName = conv.source === 'cursor' ? 'Cursor' : 'Cline';
+            console.log(`${chalk.cyan((index + 1).toString().padStart(2))}. ${conv.title}`);
+            console.log(`    ${sourceIcon} ${sourceName} • ${conv.messageCount} messages • ${new Date(conv.timestamp).toLocaleString()}`);
             if (index < conversations.length - 1) {
                 console.log();
             }
@@ -104,10 +107,13 @@ async function main() {
                 name: 'selectedIndex',
                 message: 'Select a conversation to export:',
                 choices: [
-                    ...conversations.map((conv, index) => ({
-                        name: `${index + 1}. ${conv.title}`,
-                        value: index
-                    })),
+                    ...conversations.map((conv, index) => {
+                        const sourceIcon = conv.source === 'cursor' ? '🎯' : '🤖';
+                        return {
+                            name: `${index + 1}. ${conv.title} ${sourceIcon}`,
+                            value: index
+                        };
+                    }),
                     new inquirer.Separator(),
                     {
                         name: chalk.gray('Cancel'),
@@ -122,7 +128,7 @@ async function main() {
             process.exit(0);
         }
         
-        const selectedConversation = selectConversationByIndex(conversations, selectedIndex);
+        const selectedConversation = conversations[selectedIndex];
         if (!selectedConversation) {
             console.log(chalk.red('Invalid selection.'));
             process.exit(1);
@@ -176,6 +182,7 @@ async function main() {
             // Handle different conversation sources
             if (selectedConversation.source === 'cline') {
                 // Load and parse Cline conversation
+                const { extractClineTask } = await import('./src/cline/extractor.js');
                 const taskData = extractClineTask(selectedConversation.id, selectedConversation.baseDir);
                 const parsedConversation = parseClineConversation(taskData);
                 

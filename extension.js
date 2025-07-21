@@ -34,7 +34,7 @@ function activate(context) {
     const hasShownWelcome = context.globalState.get('hasShownWelcome', false);
     if (!hasShownWelcome) {
         vscode.window.showInformationMessage(
-            'Trace Extractor is ready! Use "Export Conversation to Markdown" from the command palette to get started.',
+            'Trace Extractor is ready! Now supports both Cursor and Cline conversations. Use "Export Conversation to Markdown" from the command palette.',
             'Show Command'
         ).then(selection => {
             if (selection === 'Show Command') {
@@ -50,7 +50,4 @@ function deactivate() {
     console.log('Trace Extractor extension deactivated');
 }
 
-module.exports = {
-    activate,
-    deactivate
-};
+module.exports = { activate, deactivate };
