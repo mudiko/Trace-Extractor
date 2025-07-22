@@ -128,6 +128,8 @@ function formatToolCall(toolCall) {
         'executeCommand': '⚡',
         'createFile': '📄',
         'editFile': '✏️',
+        'editedExistingFile': '✏️',
+        'replace_in_file': '✏️',
         'default': '🔧'
     };
     
@@ -139,7 +141,8 @@ function formatToolCall(toolCall) {
         const input = typeof toolCall.input === 'string' ? toolCall.input : toolCall.input;
         
         // Special handling for different tool types
-        if (toolName === 'readFile' || toolName === 'writeFile' || toolName === 'editFile') {
+        if (toolName === 'readFile' || toolName === 'writeFile' || toolName === 'editFile' || 
+            toolName === 'editedExistingFile' || toolName === 'replace_in_file') {
             const path = input.path || extractPathFromInput(input);
             if (path) {
                 formatted += `File: \`${path}\`\n`;
@@ -156,20 +159,28 @@ function formatToolCall(toolCall) {
             }
         }
         
-        // Show content for file operations (truncated)
-        if (toolCall.result && toolCall.result.length > 0) {
-            const content = toolCall.result;
-            if (content.length < 1000) {
-                formatted += `\n\`\`\`\n${content}\n\`\`\`\n`;
-            } else {
-                // Show truncated content
-                formatted += `\n\`\`\`\n${content.substring(0, 500)}...\n[Content truncated]\n\`\`\`\n`;
+        // Show diff if available (prioritize this over raw content)
+        if (toolCall.diff) {
+            formatted += '\n**Changes:**\n';
+            if (toolCall.diff.type === 'search_replace') {
+                for (let i = 0; i < toolCall.diff.changes.length; i++) {
+                    const change = toolCall.diff.changes[i];
+                    if (toolCall.diff.changes.length > 1) {
+                        formatted += `\n**Change ${i + 1}:**\n`;
+                    }
+                    formatted += '\n**Before:**\n```\n' + change.oldContent + '\n```\n';
+                    formatted += '\n**After:**\n```\n' + change.newContent + '\n```\n';
+                }
+            } else if (toolCall.diff.type === 'traditional_diff') {
+                formatted += '\n```diff\n' + toolCall.diff.content + '\n```\n';
             }
-        } else if (typeof input === 'object' && input.content) {
-            if (input.content.length < 1000) {
+        } else {
+            // Show content for file operations (full content) - fallback if no diff
+            if (toolCall.result && toolCall.result.length > 0) {
+                const content = toolCall.result;
+                formatted += `\n\`\`\`\n${content}\n\`\`\`\n`;
+            } else if (typeof input === 'object' && input.content) {
                 formatted += `\n\`\`\`\n${input.content}\n\`\`\`\n`;
-            } else {
-                formatted += `\n\`\`\`\n${input.content.substring(0, 500)}...\n[Content truncated]\n\`\`\`\n`;
             }
         }
     }
@@ -191,7 +202,9 @@ function getToolDisplayName(toolName) {
         'searchFiles': 'Search Files',
         'executeCommand': 'Execute Command',
         'createFile': 'Create File',
-        'editFile': 'Edit File'
+        'editFile': 'Edit File',
+        'editedExistingFile': 'Edit Existing File',
+        'replace_in_file': 'Replace in File'
     };
     
     return displayNames[toolName] || toolName;
