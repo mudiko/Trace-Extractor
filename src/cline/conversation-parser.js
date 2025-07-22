@@ -58,7 +58,10 @@ function processUIMessages(uiMessages, apiConversation) {
     let currentMessage = null;
     
     for (const uiMsg of uiMessages) {
-        switch (uiMsg.say) {
+        // Handle both "say" and "ask" message types
+        const messageType = uiMsg.say || uiMsg.ask;
+        
+        switch (messageType) {
             case 'text':
                 // User message
                 if (currentMessage && currentMessage.role === 'assistant') {
@@ -103,16 +106,37 @@ function processUIMessages(uiMessages, apiConversation) {
                 break;
                 
             case 'tool':
-                // Tool usage
+                // Tool usage (both "say" and "ask" type tool calls)
                 if (currentMessage && currentMessage.role === 'assistant') {
                     try {
                         const toolData = JSON.parse(uiMsg.text);
-                        currentMessage.toolCalls.push({
+                        
+                        // Process different tool types and extract diffs where applicable
+                        let processedToolData = {
                             name: toolData.tool,
                             input: toolData,
                             timestamp: uiMsg.ts,
-                            result: toolData.content || ''
-                        });
+                            result: toolData.content || '',
+                            diff: null
+                        };
+                        
+                        // Handle editedExistingFile tool - extract diff from content
+                        if (toolData.tool === 'editedExistingFile' && toolData.content) {
+                            const diff = extractDiffFromContent(toolData.content);
+                            if (diff) {
+                                processedToolData.diff = diff;
+                            }
+                        }
+                        
+                        // Handle replace_in_file tool - extract diff from content  
+                        if (toolData.tool === 'replace_in_file' && toolData.content) {
+                            const diff = extractDiffFromContent(toolData.content);
+                            if (diff) {
+                                processedToolData.diff = diff;
+                            }
+                        }
+                        
+                        currentMessage.toolCalls.push(processedToolData);
                     } catch (e) {
                         // If parsing fails, add as raw text
                         currentMessage.content += `\n\n📋 Tool: ${uiMsg.text}\n`;
@@ -185,6 +209,42 @@ function enhanceWithApiData(messages, apiConversation) {
 }
 
 /**
+ * Extract diff information from Cline tool content
+ * @param {string} content - Tool content containing diff information
+ * @returns {Object|null} Extracted diff or null if not found
+ */
+function extractDiffFromContent(content) {
+    if (!content || typeof content !== 'string') {
+        return null;
+    }
+    
+    // Look for the SEARCH/REPLACE pattern used by Cline
+    const searchPattern = /------- SEARCH\n([\s\S]*?)\n=======\n([\s\S]*?)\n\+\+\+\+\+\+\+ REPLACE/g;
+    const matches = [...content.matchAll(searchPattern)];
+    
+    if (matches.length > 0) {
+        return {
+            type: 'search_replace',
+            changes: matches.map(match => ({
+                oldContent: match[1],
+                newContent: match[2]
+            }))
+        };
+    }
+    
+    // Look for traditional diff format
+    const diffPattern = /^[\+\-\@\s]/m;
+    if (diffPattern.test(content)) {
+        return {
+            type: 'traditional_diff',
+            content: content
+        };
+    }
+    
+    return null;
+}
+
+/**
  * Format tool call for markdown output
  * @param {Object} toolCall - Tool call object
  * @returns {string} Formatted tool call
@@ -199,10 +259,24 @@ function formatToolCall(toolCall) {
         formattedCall += `Path: \`${toolInput.path}\`\n`;
     }
     
-    if (toolInput.content && toolInput.content.length < 500) {
-        formattedCall += `\n\`\`\`\n${toolInput.content}\n\`\`\`\n`;
-    } else if (toolCall.result && toolCall.result.length < 500) {
-        formattedCall += `\n\`\`\`\n${toolCall.result}\n\`\`\`\n`;
+    // Show diff if available
+    if (toolCall.diff) {
+        formattedCall += '\n**Changes:**\n';
+        if (toolCall.diff.type === 'search_replace') {
+            for (const change of toolCall.diff.changes) {
+                formattedCall += '\n**Before:**\n```\n' + change.oldContent + '\n```\n';
+                formattedCall += '\n**After:**\n```\n' + change.newContent + '\n```\n';
+            }
+        } else if (toolCall.diff.type === 'traditional_diff') {
+            formattedCall += '\n```diff\n' + toolCall.diff.content + '\n```\n';
+        }
+    } else {
+        // Fallback to showing content
+        if (toolInput.content) {
+            formattedCall += `\n\`\`\`\n${toolInput.content}\n\`\`\`\n`;
+        } else if (toolCall.result) {
+            formattedCall += `\n\`\`\`\n${toolCall.result}\n\`\`\`\n`;
+        }
     }
     
     return formattedCall;

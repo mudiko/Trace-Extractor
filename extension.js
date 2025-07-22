@@ -5,30 +5,36 @@ const { showConversationSelector, showConversationSelectorJSON } = require('./sr
  * VSCode Extension Entry Point for Trace Extractor
  */
 
+let outputChannel;
+
 function activate(context) {
-    console.log('Trace Extractor extension is now active');
+    // Create output channel for logging
+    outputChannel = vscode.window.createOutputChannel('Trace Extractor');
+    context.subscriptions.push(outputChannel);
+    
+    outputChannel.appendLine('Trace Extractor extension is now active');
     
     // Debug: Log available commands
     vscode.commands.getCommands().then(commands => {
         const traceCommands = commands.filter(cmd => cmd.includes('trace-extractor'));
-        console.log('Available trace-extractor commands:', traceCommands);
+        outputChannel.appendLine(`Available trace-extractor commands: ${JSON.stringify(traceCommands)}`);
     });
     
     // Register the main commands
     const disposable = vscode.commands.registerCommand('trace-extractor.selectChat', async () => {
-        console.log('trace-extractor.selectChat command executed');
-        await showConversationSelector(context);
+        outputChannel.appendLine('trace-extractor.selectChat command executed');
+        await showConversationSelector(context, outputChannel);
     });
     
     const disposableJSON = vscode.commands.registerCommand('trace-extractor.selectChatJSON', async () => {
-        console.log('trace-extractor.selectChatJSON command executed');
-        await showConversationSelectorJSON(context);
+        outputChannel.appendLine('trace-extractor.selectChatJSON command executed');
+        await showConversationSelectorJSON(context, outputChannel);
     });
     
     context.subscriptions.push(disposable, disposableJSON);
     
     // Debug: Confirm command registration
-    console.log('trace-extractor.selectChat and trace-extractor.selectChatJSON commands registered');
+    outputChannel.appendLine('trace-extractor.selectChat and trace-extractor.selectChatJSON commands registered');
     
     // Show welcome message on first activation
     const hasShownWelcome = context.globalState.get('hasShownWelcome', false);
@@ -47,7 +53,14 @@ function activate(context) {
 }
 
 function deactivate() {
-    console.log('Trace Extractor extension deactivated');
+    if (outputChannel) {
+        outputChannel.appendLine('Trace Extractor extension deactivated');
+        outputChannel.dispose();
+    }
 }
 
-module.exports = { activate, deactivate };
+function getOutputChannel() {
+    return outputChannel;
+}
+
+module.exports = { activate, deactivate, getOutputChannel };

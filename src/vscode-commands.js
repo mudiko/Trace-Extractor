@@ -10,14 +10,14 @@ const {
     generateMarkdownConversation, 
     generateConversationFilename 
 } = require('./markdown-generator.js');
-const { getRecentClineConversations, extractClineTask } = require('./cline/extractor.js');
+const { getRecentClineConversations, extractClineTask, getExtensionFriendlyName } = require('./cline/extractor.js');
 const { parseClineConversation } = require('./cline/conversation-parser.js');
 const { conversationToMarkdown } = require('./cline/markdown-generator.js');
 
 /**
  * Load conversations from multiple sources
  */
-async function loadAllConversations(extensionContext = null) {
+async function loadAllConversations(extensionContext = null, outputChannel = null) {
     let allConversations = [];
     let cursorCount = 0;
     let clineCount = 0;
@@ -27,27 +27,41 @@ async function loadAllConversations(extensionContext = null) {
         const cursorConvs = await getRecentConversations(10, extensionContext);
         cursorCount = cursorConvs.length;
         allConversations = allConversations.concat(cursorConvs.map(conv => ({...conv, source: 'cursor', extensionTag: 'cursor'})));
-        console.log(`Loaded ${cursorCount} Cursor conversations`);
+        const message = `Loaded ${cursorCount} Cursor conversations`;
+        if (outputChannel) outputChannel.appendLine(message);
+        else console.log(message);
     } catch (error) {
-        console.warn('Could not load Cursor conversations:', error.message);
+        const message = `Could not load Cursor conversations: ${error.message}`;
+        if (outputChannel) outputChannel.appendLine(`WARNING: ${message}`);
+        else console.warn(message);
         vscode.window.showWarningMessage(`Could not load Cursor conversations: ${error.message}`);
     }
     
     // Try to load Cline conversations
     try {
-        const clineConvs = getRecentClineConversations(10);
+        const clineConvs = getRecentClineConversations(10, extensionContext, outputChannel);
         clineCount = clineConvs.length;
-        allConversations = allConversations.concat(clineConvs.map(conv => ({...conv, source: 'cline', extensionTag: 'xai.grok-dev'})));
-        console.log(`Loaded ${clineCount} Cline conversations`);
+        allConversations = allConversations.concat(clineConvs.map(conv => ({...conv, source: 'cline'})));
+        const message = `Loaded ${clineCount} Cline conversations`;
+        if (outputChannel) outputChannel.appendLine(message);
+        else console.log(message);
     } catch (error) {
-        console.warn('Could not load Cline conversations:', error.message);
+        const message = `Could not load Cline conversations: ${error.message}`;
+        if (outputChannel) outputChannel.appendLine(`WARNING: ${message}`);
+        else console.warn(message);
         vscode.window.showWarningMessage(`Could not load Cline conversations: ${error.message}`);
     }
     
-    console.log(`Total conversations loaded: ${allConversations.length} (Cursor: ${cursorCount}, Cline: ${clineCount})`);
+    const message = `Total conversations loaded: ${allConversations.length} (Cursor: ${cursorCount}, Cline: ${clineCount})`;
+    if (outputChannel) outputChannel.appendLine(message);
+    else console.log(message);
     
     // Sort by timestamp (most recent first)
-    allConversations.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    allConversations.sort((a, b) => {
+        const timestampA = a.source === 'cursor' ? a.lastMessageTime : a.timestamp;
+        const timestampB = b.source === 'cursor' ? b.lastMessageTime : b.timestamp;
+        return new Date(timestampB) - new Date(timestampA);
+    });
     
     return allConversations;
 }
@@ -56,9 +70,46 @@ async function loadAllConversations(extensionContext = null) {
  * Format conversation for VSCode QuickPick (supports both sources)
  */
 function formatConversationForVSCodeUnified(conv, index) {
-    const sourceIcon = conv.source === 'cursor' ? '🎯' : '🤖';
-    const sourceName = conv.source === 'cursor' ? 'Cursor' : 'Cline';
-    const extensionTag = conv.extensionTag || (conv.source === 'cursor' ? 'cursor' : 'xai.grok-dev');
+    // Determine source icon and name based on actual extension
+    let sourceIcon = '';
+    let sourceName = '';
+    
+    if (conv.source === 'cursor') {
+        sourceIcon = '🎯';
+        sourceName = 'Cursor';
+    } else {
+        // For non-cursor conversations, only show icon/name if it's actually Cline
+        const extensionId = conv.extensionId || (conv.baseDir ? 
+            (conv.baseDir.includes('saoudrizwan.claude-dev') ? 'saoudrizwan.claude-dev' : 
+             conv.baseDir.includes('xai.grok-dev') ? 'xai.grok-dev' : 'unknown') : 'unknown');
+        
+        if (extensionId === 'saoudrizwan.claude-dev') {
+            sourceIcon = '🤖';
+            sourceName = 'Cline';
+        }
+        // For xai.grok-dev or other extensions, leave icon and sourceName empty
+    }
+    
+    // For Cline conversations, use friendly name from actual extension ID if available
+    let displayExtensionName;
+    if (conv.source === 'cursor') {
+        displayExtensionName = 'Cursor';
+    } else {
+        // For Cline, use the extension ID if available, otherwise determine from baseDir
+        if (conv.extensionId && conv.extensionId !== 'unknown') {
+            displayExtensionName = getExtensionFriendlyName(conv.extensionId);
+        } else if (conv.baseDir) {
+            if (conv.baseDir.includes('saoudrizwan.claude-dev')) {
+                displayExtensionName = getExtensionFriendlyName('saoudrizwan.claude-dev');
+            } else if (conv.baseDir.includes('xai.grok-dev')) {
+                displayExtensionName = getExtensionFriendlyName('xai.grok-dev');
+            } else {
+                displayExtensionName = 'Cline';
+            }
+        } else {
+            displayExtensionName = 'Cline';
+        }
+    }
     
     // Add model information for Cline conversations
     let modelInfo = '';
@@ -70,10 +121,21 @@ function formatConversationForVSCodeUnified(conv, index) {
         modelInfo = ` • ${shortModelName}`;
     }
     
+    // Get the correct timestamp field based on source
+    const timestamp = conv.source === 'cursor' ? conv.lastMessageTime : conv.timestamp;
+    
+    // Build description - only include source info if we have it
+    let description = '';
+    if (sourceIcon && sourceName) {
+        description = `${sourceIcon} ${sourceName} • ${conv.messageCount} messages${modelInfo}`;
+    } else {
+        description = `${conv.messageCount} messages${modelInfo}`;
+    }
+    
     return {
         label: `${index + 1}. ${conv.title}`,
-        description: `${sourceIcon} ${sourceName} (${extensionTag}) • ${conv.messageCount} messages${modelInfo}`,
-        detail: `${new Date(conv.timestamp).toLocaleString()} • ${extensionTag}${modelInfo ? ` • Model: ${conv.model}` : ''}`,
+        description: description,
+        detail: `${new Date(timestamp).toLocaleString()} • ${displayExtensionName}${modelInfo ? ` • Model: ${conv.model}` : ''}`,
         conversation: conv.source === 'cursor' ? conv.conversation : conv,
         index
     };
@@ -82,7 +144,7 @@ function formatConversationForVSCodeUnified(conv, index) {
 /**
  * Show conversation selection UI in VSCode (unified for both Cursor and Cline)
  */
-async function showConversationSelector(extensionContext = null) {
+async function showConversationSelector(extensionContext = null, outputChannel = null) {
     try {
         // Show progress
         const result = await vscode.window.withProgress({
@@ -100,7 +162,7 @@ async function showConversationSelector(extensionContext = null) {
             // Get conversations from all sources
             let conversations;
             try {
-                conversations = await loadAllConversations(extensionContext);
+                conversations = await loadAllConversations(extensionContext, outputChannel);
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}`);
                 return null;
@@ -152,7 +214,7 @@ async function showConversationSelector(extensionContext = null) {
                 // Handle different conversation sources
                 if (selected.conversation.source === 'cline') {
                     // Load and parse Cline conversation
-                    const taskData = extractClineTask(selected.conversation.id, selected.conversation.baseDir);
+                    const taskData = extractClineTask(selected.conversation.id, selected.conversation.baseDir, null, outputChannel);
                     const parsedConversation = parseClineConversation(taskData);
                     markdown = conversationToMarkdown(parsedConversation);
                 } else {
@@ -197,7 +259,7 @@ async function showConversationSelector(extensionContext = null) {
 /**
  * Show conversation selection UI in VSCode for JSON export
  */
-async function showConversationSelectorJSON(extensionContext = null) {
+async function showConversationSelectorJSON(extensionContext = null, outputChannel = null) {
     try {
         // Show progress
         const result = await vscode.window.withProgress({
@@ -215,7 +277,7 @@ async function showConversationSelectorJSON(extensionContext = null) {
             // Get conversations from all sources
             let conversations;
             try {
-                conversations = await loadAllConversations(extensionContext);
+                conversations = await loadAllConversations(extensionContext, outputChannel);
             } catch (error) {
                 vscode.window.showErrorMessage(`Failed to load conversations: ${error.message}`);
                 return null;
@@ -267,7 +329,7 @@ async function showConversationSelectorJSON(extensionContext = null) {
                 // Handle different conversation sources
                 if (selected.conversation.source === 'cline') {
                     // Load and parse Cline conversation
-                    const taskData = extractClineTask(selected.conversation.id, selected.conversation.baseDir);
+                    const taskData = extractClineTask(selected.conversation.id, selected.conversation.baseDir, null, outputChannel);
                     const parsedConversation = parseClineConversation(taskData);
                     jsonContent = JSON.stringify(parsedConversation, null, 2);
                 } else {
